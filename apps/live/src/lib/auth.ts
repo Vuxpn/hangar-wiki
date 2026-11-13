@@ -6,9 +6,11 @@
 
 // plane imports
 import type { IncomingHttpHeaders } from "http";
+import type { ConnectionConfiguration } from "@hocuspocus/server";
 import type { TUserDetails } from "@plane/editor";
 import { logger } from "@plane/logger";
 import { AppError } from "@/lib/errors";
+import { enforceWikiPageAccess } from "@/lib/wiki-access";
 // services
 import { UserService } from "@/services/user.service";
 // types
@@ -26,11 +28,15 @@ export const onAuthenticate = async ({
   requestParameters,
   context,
   token,
+  documentName,
+  connection,
 }: {
   requestHeaders: IncomingHttpHeaders;
   context: HocusPocusServerContext;
   requestParameters: URLSearchParams;
   token: string;
+  documentName?: string;
+  connection?: ConnectionConfiguration;
 }) => {
   let cookie: string | undefined = undefined;
   let userId: string | undefined = undefined;
@@ -66,10 +72,17 @@ export const onAuthenticate = async ({
   context.userId = userId;
   context.workspaceSlug = requestParameters.get("workspaceSlug");
 
-  return await handleAuthentication({
+  const authenticated = await handleAuthentication({
     cookie: context.cookie,
     userId: context.userId,
   });
+
+  // Fork (see FORK.md): wiki pages are checked on every connection.
+  if (context.documentType === "workspace_page" && documentName && connection) {
+    await enforceWikiPageAccess({ context, documentName, connection });
+  }
+
+  return authenticated;
 };
 
 export const handleAuthentication = async ({ cookie, userId }: { cookie: string; userId: string }) => {

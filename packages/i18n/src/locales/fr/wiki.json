@@ -109,5 +109,48 @@
     "nested_pages_download_banner": {
       "title": "Les pages imbriquées nécessitent un forfait payant. Mettez à niveau pour débloquer."
     }
+  },
+  "workspace_wiki": {
+    "toasts": {
+      "move_error": "The page could not be moved. Please try again.",
+      "archive_error": "The page could not be archived. Please try again.",
+      "restore_error": "The page could not be restored. Please try again.",
+      "members_error": "Members could not be updated. Please try again."
+    },
+    "sidebar": {
+      "add_sub_page": "Add a page inside"
+    },
+    "collection": {
+      "public_hint": "Every workspace member can read and edit.",
+      "private_hint": "Only you and the people you add.",
+      "access_fixed": "A collection stays public or private once it is created."
+    },
+    "delete": {
+      "move_title": "Move pages to General",
+      "move_hint": "Pages stay readable by the workspace in the General collection.",
+      "archive_title": "Archive the pages",
+      "archive_hint": "Pages move to the archive, where they can be restored.",
+      "private_hint": "Pages in this private collection are archived and become private to their authors."
+    },
+    "members": {
+      "view": "Can view",
+      "comment": "Can comment",
+      "edit": "Can edit",
+      "private_hint": "Only these people can see this collection.",
+      "public_hint": "Every workspace member can already edit; add guests or set narrower access here.",
+      "pick": "Select a member",
+      "empty": "No members added yet."
+    },
+    "not_found": {
+      "title": "Page not found",
+      "description": "The page you are trying to access doesn't exist or you don't have permission to view it.",
+      "back": "Back to the wiki"
+    },
+    "home": {
+      "collections": "Collections",
+      "page_count": "{count} {count, plural, one {page} other {pages}}",
+      "recent": "Recently updated",
+      "empty": "No pages yet. Create one from the sidebar."
+    }
   }
 }

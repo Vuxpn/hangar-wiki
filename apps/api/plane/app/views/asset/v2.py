@@ -292,6 +292,11 @@ class WorkspaceFileAssetEndpoint(BaseAPIView):
             ).first()
             if page is None:
                 return None
+            # Fork (see FORK.md): workspace wiki pages follow the wiki's access policy.
+            if page.is_global and not ProjectPage.objects.filter(page=page).exists():
+                from plane.ext.wiki.access import EDIT, page_access
+
+                return {"page_id": page.id} if page_access(request.user, page) >= EDIT else None
             if page.owned_by_id == request.user.id:
                 return {"page_id": page.id}
             if page.access != Page.PUBLIC_ACCESS:

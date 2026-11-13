@@ -100,3 +100,4 @@ __all__ = [
 ]
 
 from .capacity import GoogleTrainingRule, GoogleTrainingEventLink
+from .wiki import WikiCollection, WikiCollectionMember, WikiPageCollection

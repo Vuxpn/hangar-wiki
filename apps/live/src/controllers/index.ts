@@ -6,7 +6,15 @@
 
 import { CollaborationController } from "./collaboration.controller";
 import { DocumentController } from "./document.controller";
+import { DocumentReplaceController } from "./document-replace.controller";
 import { HealthController } from "./health.controller";
 import { PdfExportController } from "./pdf-export.controller";
 
-export const CONTROLLERS = [CollaborationController, DocumentController, HealthController, PdfExportController];
+export const CONTROLLERS = [
+  CollaborationController,
+  DocumentController,
+  HealthController,
+  PdfExportController,
+  // Fork (see FORK.md): lets the API write into an open wiki page.
+  DocumentReplaceController,
+];

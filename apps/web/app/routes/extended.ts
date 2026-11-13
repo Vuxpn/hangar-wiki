@@ -13,6 +13,13 @@ import type { RouteConfigEntry } from "@react-router/dev/routes";
 
 export const extendedRoutes: RouteConfigEntry[] = [
   layout("./(all)/layout.tsx", [
+    // The workspace wiki, beside the projects app rather than inside it.
+    layout("./(all)/[workspaceSlug]/layout.tsx", [
+      layout("./(all)/[workspaceSlug]/(wiki)/layout.tsx", [
+        route(":workspaceSlug/wiki", "./(all)/[workspaceSlug]/(wiki)/wiki/page.tsx"),
+        route(":workspaceSlug/wiki/:pageId", "./(all)/[workspaceSlug]/(wiki)/wiki/[pageId]/page.tsx"),
+      ]),
+    ]),
     layout("./(all)/[workspaceSlug]/layout.tsx", [
       layout("./(all)/[workspaceSlug]/(projects)/layout.tsx", [
         layout("./(all)/[workspaceSlug]/(projects)/browse/[workItem]/layout.tsx", [

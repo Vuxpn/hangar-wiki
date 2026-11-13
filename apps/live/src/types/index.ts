@@ -23,7 +23,8 @@ export interface StorePayloadWithContext extends storePayload {
   context: HocusPocusServerContext;
 }
 
-export type TDocumentTypes = "project_page";
+// Fork (see FORK.md): "workspace_page" serves the workspace wiki.
+export type TDocumentTypes = "project_page" | "workspace_page";
 
 // Additional Hocuspocus types that are not exported from the main package
 export type HocusPocusServerContext = {

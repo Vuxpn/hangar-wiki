@@ -1,0 +1,41 @@
+/**
+ * Copyright (c) 2026-present Maciej Szymczak and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
+
+import type { TPage } from "@plane/types";
+import { AppError } from "@/lib/errors";
+import { PageService } from "./extended.service";
+
+/** The wiki page payload, with the caller's level on it (0 view, 1 comment, 2 edit). */
+export type TWikiPageAccess = TPage & { current_user_access?: number; is_locked?: boolean };
+
+interface WorkspacePageServiceParams {
+  workspaceSlug: string | null;
+  cookie: string | null;
+  [key: string]: unknown;
+}
+
+/** Loads and saves workspace wiki pages through the API's wiki routes. */
+export class WorkspacePageService extends PageService {
+  protected basePath: string;
+
+  constructor(params: WorkspacePageServiceParams) {
+    super();
+    const { workspaceSlug } = params;
+    if (!workspaceSlug) throw new AppError("Missing required fields.");
+    if (!params.cookie) throw new AppError("Cookie is required.");
+    this.setHeader("Cookie", params.cookie);
+    this.basePath = `/api/workspaces/${workspaceSlug}/wiki`;
+  }
+
+  /** The page as the connecting user sees it; fails when they cannot see it at all. */
+  async fetchAccess(pageId: string): Promise<TWikiPageAccess> {
+    const response = await this.get(`${this.basePath}/pages/${pageId}/`, {
+      headers: this.getHeader(),
+      params: { track_visit: false },
+    });
+    return response?.data as TWikiPageAccess;
+  }
+}
