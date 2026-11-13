@@ -12,6 +12,7 @@ and payloads of the commercial edition's public API.
 
 # Python imports
 import json
+import uuid
 
 # Django imports
 from django.core.serializers.json import DjangoJSONEncoder
@@ -56,6 +57,24 @@ def _bool(value):
     return str(value).lower() in ("1", "true", "yes")
 
 
+def _uuid(value):
+    """The canonical form of a UUID, or None when ``value`` is not one."""
+    try:
+        return str(uuid.UUID(str(value)))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _bad(message):
+    return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class WikiMixin:
     """Lookups and policy checks common to both front doors."""
 
@@ -96,6 +115,23 @@ class WikiMixin:
     def refuse(self, error: services.WikiError):
         return Response({"error": error.message}, status=error.status)
 
+    def leaving_private_refused(self, page, target_collection_id):
+        """Taking a page out of a private collection would publish it; only the collection's manager may.
+
+        ``target_collection_id`` is where the page ends up (None when unfiled).
+        """
+        row = policy.page_collection_row(page)
+        if row is None or row.collection.access != WikiCollection.PRIVATE_ACCESS:
+            return None
+        if target_collection_id is not None and str(target_collection_id) == str(row.collection_id):
+            return None
+        if policy.can_manage_collection(self.request.user, row.collection, self.wiki_role(page.workspace.slug)):
+            return None
+        return Response(
+            {"error": "Only the collection's owner can move pages out of a private collection."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     def collection_levels(self, slug, collections):
         role = self.wiki_role(slug)
         return {c.id: policy.collection_access(self.request.user, c, role) for c in collections}
@@ -104,6 +140,8 @@ class WikiMixin:
         """The (parent, collection) a new page goes into, or a refusal Response."""
         parent_id = data.get("parent_id") or data.get("parent")
         collection_id = data.get("collection_id")
+        if (parent_id and not _uuid(parent_id)) or (collection_id and not _uuid(collection_id)):
+            return None, None, _bad("parent_id and collection_id must be UUIDs.")
         if parent_id and collection_id:
             return None, None, Response(
                 {"error": "Pass parent_id or collection_id, not both. A nested page takes its parent's collection."},
@@ -134,6 +172,10 @@ class WikiMixin:
         return None
 
     def create_page(self, slug, data):
+        if not isinstance(data.get("name") or "", str):
+            return None, _bad("name must be a string.")
+        if not isinstance(data.get("description_html") or "", str):
+            return None, _bad("description_html must be a string.")
         error = self.validate_access_value(data)
         if error:
             return None, error
@@ -188,7 +230,11 @@ class WikiMixin:
             queryset = queryset.filter(archived_at__isnull=not _bool(archived))
         collection_id = request.query_params.get("collection_id")
         if collection_id:
-            queryset = queryset.filter(wiki_page_collections__collection_id=collection_id)
+            queryset = (
+                queryset.filter(wiki_page_collections__collection_id=_uuid(collection_id))
+                if _uuid(collection_id)
+                else queryset.none()
+            )
         search = request.query_params.get("search")
         if search:
             queryset = queryset.filter(name__icontains=search)
@@ -198,8 +244,11 @@ class WikiMixin:
         return (
             queryset.annotate(is_favorite=Exists(favorites))
             .annotate(
+                # Only children the caller can see; children share their parent's collection.
                 sub_pages_count=Count(
-                    "child_page", filter=Q(child_page__archived_at__isnull=True, child_page__deleted_at__isnull=True)
+                    "child_page",
+                    filter=Q(child_page__archived_at__isnull=True, child_page__deleted_at__isnull=True)
+                    & (Q(child_page__access=Page.PUBLIC_ACCESS) | Q(child_page__owned_by=request.user)),
                 )
             )
             .order_by("sort_order", "created_at")
@@ -231,9 +280,10 @@ class CollectionsMixin(WikiMixin):
     def create_collection(self, request, slug):
         if self.wiki_role(slug) is None or self.wiki_role(slug) < ROLE.MEMBER.value:
             return Response({"error": "Only workspace members can create collections."}, status=status.HTTP_403_FORBIDDEN)
-        name = (request.data.get("name") or "").strip()
-        if not name:
+        name = request.data.get("name") or ""
+        if not isinstance(name, str) or not name.strip():
             return Response({"name": ["This field is required."]}, status=status.HTTP_400_BAD_REQUEST)
+        name = name.strip()
         access = request.data.get("access", WikiCollection.PUBLIC_ACCESS)
         if access not in (WikiCollection.PUBLIC_ACCESS, WikiCollection.PRIVATE_ACCESS):
             return Response({"error": "access must be 0 (public) or 1 (private)."}, status=status.HTTP_400_BAD_REQUEST)
@@ -269,15 +319,21 @@ class CollectionsMixin(WikiMixin):
             )
         fields = []
         if "name" in request.data:
-            name = (request.data.get("name") or "").strip()
-            if not name:
+            name = request.data.get("name") or ""
+            if not isinstance(name, str) or not name.strip():
                 return Response({"name": ["This field may not be blank."]}, status=status.HTTP_400_BAD_REQUEST)
-            collection.name = name[:255]
+            collection.name = name.strip()[:255]
             fields.append("name")
-        for field in ("logo_props", "sort_order"):
-            if field in request.data and request.data[field] is not None:
-                setattr(collection, field, request.data[field])
-                fields.append(field)
+        if request.data.get("logo_props") is not None:
+            if not isinstance(request.data["logo_props"], dict):
+                return _bad("logo_props must be an object.")
+            collection.logo_props = request.data["logo_props"]
+            fields.append("logo_props")
+        if request.data.get("sort_order") is not None:
+            if _number(request.data["sort_order"]) is None:
+                return _bad("sort_order must be a number.")
+            collection.sort_order = _number(request.data["sort_order"])
+            fields.append("sort_order")
         if fields:
             collection.save(update_fields=fields + ["updated_at"])
         context = {"access_levels": {collection.id: granted}}
@@ -337,8 +393,10 @@ class CollectionMembersMixin(WikiMixin):
             return error
         if not policy.can_manage_collection(request.user, collection, self.wiki_role(slug)):
             return Response({"error": "Only the owner can change members."}, status=status.HTTP_403_FORBIDDEN)
-        member_id = request.data.get("member")
+        member_id = _uuid(request.data.get("member"))
         access = request.data.get("access")
+        if member_id is None:
+            return _bad("member must be a user id.")
         if access not in (policy.VIEW, policy.COMMENT, policy.EDIT):
             return Response({"error": "access must be 0, 1 or 2."}, status=status.HTTP_400_BAD_REQUEST)
         if not WorkspaceMember.objects.filter(workspace__slug=slug, member_id=member_id, is_active=True).exists():
@@ -507,17 +565,31 @@ class AppPageMoveEndpoint(WikiMixin, SessionBaseView):
         page, granted = self.page_for(slug, page_id, policy.EDIT)
         if page is None:
             return self.denied(granted, NOT_FOUND)
-        kwargs = {"sort_order": request.data.get("sort_order")}
-        if "parent_id" in request.data and request.data["parent_id"]:
-            parent, parent_granted = self.page_for(slug, request.data["parent_id"], policy.EDIT)
+        sort_order = request.data.get("sort_order")
+        if sort_order is not None and _number(sort_order) is None:
+            return _bad("sort_order must be a number.")
+        kwargs = {"sort_order": _number(sort_order)}
+        parent_id, collection_id = request.data.get("parent_id"), request.data.get("collection_id")
+        if (parent_id and not _uuid(parent_id)) or (collection_id and not _uuid(collection_id)):
+            return _bad("parent_id and collection_id must be UUIDs.")
+        target = ...
+        if parent_id:
+            parent, parent_granted = self.page_for(slug, parent_id, policy.EDIT)
             if parent is None:
                 return self.denied(parent_granted, {"error": "Parent page not found."})
             kwargs["parent"] = parent
-        elif request.data.get("collection_id"):
-            collection, c_granted = self.collection_for(slug, request.data["collection_id"], policy.EDIT)
+            parent_row = policy.page_collection_row(parent)
+            target = parent_row.collection_id if parent_row else None
+        elif collection_id:
+            collection, c_granted = self.collection_for(slug, collection_id, policy.EDIT)
             if collection is None:
                 return self.denied(c_granted, COLLECTION_NOT_FOUND)
             kwargs["collection"] = collection
+            target = collection.id
+        if target is not ...:
+            refused = self.leaving_private_refused(page, target)
+            if refused:
+                return refused
         try:
             services.move_page(page, **kwargs)
         except services.WikiError as exc:
@@ -642,8 +714,10 @@ class ApiPagesEndpoint(ApiWikiBase):
         )
 
     def post(self, request, slug):
+        if not isinstance(request.data, dict):
+            return _bad("Expected a JSON object.")
         data = dict(request.data)
-        if not (data.get("name") or "").strip():
+        if not isinstance(data.get("name"), str) or not data["name"].strip():
             return Response({"name": ["This field is required."]}, status=status.HTTP_400_BAD_REQUEST)
         if data.get("description_html") is None:
             return Response({"description_html": ["This field is required."]}, status=status.HTTP_400_BAD_REQUEST)
@@ -671,28 +745,35 @@ class ApiPageDetailEndpoint(ApiWikiBase):
         if page is None:
             return self.denied(granted, NOT_FOUND)
         data = request.data
+        if not isinstance(data, dict):
+            return _bad("Expected a JSON object.")
         if page.is_locked and not (set(data) <= {"is_locked"}):
             return Response({"error": "Page is locked."}, status=status.HTTP_400_BAD_REQUEST)
+        # Validate everything before changing anything, so a refusal leaves the page as it was.
+        name = data.get("name") if "name" in data else None
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            return Response({"name": ["This field may not be blank."]}, status=status.HTTP_400_BAD_REQUEST)
+        html = data.get("description_html") if "description_html" in data else None
+        if html is not None and not isinstance(html, str):
+            return _bad("description_html must be a string.")
+        error = self.validate_access_value(data)
+        if error:
+            return error
         if "archived_at" in data:
             if data["archived_at"]:
                 services.archive_page(page)
             else:
                 services.unarchive_page(page)
             page.refresh_from_db()
-        name = data.get("name") if "name" in data else None
-        if name is not None and not name.strip():
-            return Response({"name": ["This field may not be blank."]}, status=status.HTTP_400_BAD_REQUEST)
-        html = data.get("description_html") if "description_html" in data else None
         properties = {k: v for k, v in data.items() if k not in ("name", "description_html", "archived_at")}
         error = self.update_page_properties(page, properties)
         if error:
             return error
         if name is not None or html is not None:
             try:
-                services.write_content(page, name=name, description_html=html)
+                page = services.write_content(page, name=name, description_html=html)
             except services.WikiError as exc:
                 return self.refuse(exc)
-        page.refresh_from_db()
         return Response(WikiPageSerializer(page).data)
 
     def delete(self, request, slug, page_id):
@@ -769,11 +850,14 @@ class ApiCollectionPagesEndpoint(ApiWikiBase):
         visible = policy.visible_pages(request.user, slug).filter(archived_at__isnull=True)
         rows = WikiPageCollection.objects.filter(collection=collection, page__in=visible).select_related("page")
         parent_id = request.query_params.get("parent_id")
+        if parent_id and not _uuid(parent_id):
+            return _bad("parent_id must be a UUID.")
         rows = rows.filter(page__parent_id=parent_id) if parent_id else rows.filter(page__parent__isnull=True)
         search = request.query_params.get("search")
         if search:
             rows = rows.filter(page__name__icontains=search)
-        rows = rows.order_by("sort_order", "created_at")
+        # The page's own sort order is the one the tree uses at every level.
+        rows = rows.order_by("page__sort_order", "created_at")
 
         def branch(items):
             return [
@@ -799,7 +883,11 @@ class ApiCollectionPagesEndpoint(ApiWikiBase):
         if not isinstance(page_ids, list) or not page_ids:
             return Response({"page_ids": ["Pass at least one page id."]}, status=status.HTTP_400_BAD_REQUEST)
         sort_orders = request.data.get("sort_orders") or {}
-        rows = []
+        if not isinstance(sort_orders, dict) or any(_number(v) is None for v in sort_orders.values()):
+            return _bad("sort_orders must map page ids to numbers.")
+        if any(not _uuid(page_id) for page_id in page_ids):
+            return _bad("page_ids must be UUIDs.")
+        pages = []
         for page_id in page_ids:
             page, page_granted = self.page_for(slug, page_id, policy.EDIT)
             if page is None:
@@ -809,10 +897,17 @@ class ApiCollectionPagesEndpoint(ApiWikiBase):
                     {"error": "Only top-level pages can be filed; a nested page follows its parent."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            order = sort_orders.get(str(page_id))
+            refused = self.leaving_private_refused(page, collection.id)
+            if refused:
+                return refused
+            pages.append(page)
+        rows = []
+        for page in pages:
+            order = _number(sort_orders.get(str(page.id)))
             if order is None:
                 order = services.next_sort_order(collection=collection)
             rows.append(services.file_tree(page, collection, sort_order=order))
+            Page.objects.filter(pk=page.id).update(sort_order=order)
         return Response(WikiCollectionPageSerializer(rows, many=True).data, status=status.HTTP_201_CREATED)
 
 
@@ -840,7 +935,12 @@ class ApiCollectionPageDetailEndpoint(ApiWikiBase):
         if error:
             return error
         sort_order = request.data.get("sort_order")
+        if sort_order is not None and _number(sort_order) is None:
+            return _bad("sort_order must be a number.")
+        sort_order = _number(sort_order)
         target_id = request.data.get("collection")
+        if target_id and not _uuid(target_id):
+            return _bad("collection must be a UUID.")
         if target_id and str(target_id) != str(row.collection_id):
             target, granted = self.collection_for(slug, target_id, policy.EDIT)
             if target is None:
@@ -851,9 +951,12 @@ class ApiCollectionPageDetailEndpoint(ApiWikiBase):
                     {"error": "Move the top-level page; a nested page follows its parent."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            row = services.file_tree(
-                root, target, sort_order=sort_order if sort_order is not None else services.next_sort_order(target)
-            )
+            refused = self.leaving_private_refused(root, target.id)
+            if refused:
+                return refused
+            order = sort_order if sort_order is not None else services.next_sort_order(target)
+            row = services.file_tree(root, target, sort_order=order)
+            Page.objects.filter(pk=root.id).update(sort_order=order)
         elif sort_order is not None:
             row.sort_order = sort_order
             row.save(update_fields=["sort_order", "updated_at"])
@@ -869,6 +972,9 @@ class ApiCollectionPageDetailEndpoint(ApiWikiBase):
                 {"error": "Unfile the top-level page; a nested page follows its parent."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        refused = self.leaving_private_refused(row.page, None)
+        if refused:
+            return refused
         services.file_tree(row.page, None)
         return Response(status=status.HTTP_204_NO_CONTENT)
 

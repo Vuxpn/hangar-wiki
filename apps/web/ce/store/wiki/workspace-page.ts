@@ -172,7 +172,12 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
   }
 
   get canCurrentUserDeletePage() {
-    return this.isCurrentUserOwner || this.isAdmin;
+    if (this.isCurrentUserOwner || this.isAdmin) return true;
+    // The server also lets a collection's manager delete pages filed in it.
+    const collection = this.collection_id
+      ? this.rootStore.workspacePages.getCollectionById(this.collection_id)
+      : undefined;
+    return !!collection && collection.owned_by_id === this.rootStore.user.data?.id;
   }
 
   get canCurrentUserFavoritePage() {

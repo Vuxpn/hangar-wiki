@@ -15,7 +15,7 @@ import requests
 
 # Django imports
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Max
 
 # Module imports
@@ -45,18 +45,19 @@ def default_collection(workspace: Workspace, user) -> WikiCollection:
     found = WikiCollection.objects.filter(workspace=workspace, is_default=True).first()
     if found:
         return found
-    with transaction.atomic():
-        found = WikiCollection.objects.select_for_update().filter(workspace=workspace, is_default=True).first()
-        if found:
-            return found
-        return WikiCollection.objects.create(
-            workspace=workspace,
-            name="General",
-            access=WikiCollection.PUBLIC_ACCESS,
-            owned_by=workspace.owner or user,
-            is_default=True,
-            sort_order=0,
-        )
+    try:
+        with transaction.atomic():
+            return WikiCollection.objects.create(
+                workspace=workspace,
+                name="General",
+                access=WikiCollection.PUBLIC_ACCESS,
+                owned_by=workspace.owner or user,
+                is_default=True,
+                sort_order=0,
+            )
+    except IntegrityError:
+        # A concurrent first visit created it; the unique constraint keeps one.
+        return WikiCollection.objects.get(workspace=workspace, is_default=True)
 
 
 def descendant_ids(page_id):
@@ -64,7 +65,7 @@ def descendant_ids(page_id):
     sql = """
     WITH RECURSIVE descendants AS (
         SELECT id FROM pages WHERE id = %s
-        UNION ALL
+        UNION
         SELECT pages.id FROM pages, descendants
         WHERE pages.parent_id = descendants.id AND pages.deleted_at IS NULL
     )
@@ -160,6 +161,12 @@ def move_page(page: Page, *, parent=..., collection=..., sort_order=None):
     from its parent.
     """
     with transaction.atomic():
+        if parent is not ... and parent is not None:
+            # Serialize concurrent moves of the same pages so two requests cannot
+            # each pass the cycle check and together create a loop.
+            list(Page.objects.select_for_update().filter(pk__in=[page.id, parent.id]).order_by("pk"))
+            if parent.archived_at:
+                raise WikiError("A page cannot be moved under an archived page.")
         if parent is not ...:
             if parent is not None:
                 if parent.id in descendant_ids(page.id):
@@ -197,7 +204,9 @@ def delete_page(page: Page):
     with transaction.atomic():
         Page.objects.filter(parent_id=page.id).update(parent=None)
         WikiPageCollection.objects.filter(page=page).delete(soft=False)
-        page.delete()
+    # Outside the transaction: delete() queues a task that soft-deletes related
+    # rows, children included, and it must see them already detached.
+    page.delete()
     UserFavorite.objects.filter(entity_type="page", entity_identifier=page.id).delete()
     UserRecentVisit.objects.filter(entity_name="page", entity_identifier=page.id).delete(soft=False)
 
@@ -247,22 +256,34 @@ def write_content(page: Page, *, name=None, description_html=None):
                 **({"name": name} if name is not None else {}),
             },
         )
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 409:
+            raise WikiError("The page is being closed by its last editor; retry in a few seconds.", status=409)
+        logger.warning("Live server refused the write to page %s: %s", page.id, exc)
+        raise WikiError("The collaboration service could not apply the change; nothing was written.", status=502)
     except requests.RequestException as exc:
         logger.warning("Live server unreachable while writing page %s: %s", page.id, exc)
         raise WikiError("The collaboration service is unavailable; nothing was written.", status=502)
 
     if applied and applied.get("applied"):
         # The live server saves the body through the regular description endpoint;
-        # the title is mirrored here so the response is current right away.
+        # the title is mirrored here, and the body only in memory, so the response
+        # is current right away.
         if name is not None:
             page.name = name
             page.save(update_fields=["name", "updated_at"])
+        if html is not None:
+            page.description_html = html
         return page
 
     fields = ["updated_at"]
     if name is not None:
         page.name = name
         fields.append("name")
+        if html is None:
+            # The stored document carries the old title; rebuild it from HTML and name.
+            page.description_binary = None
+            fields.append("description_binary")
     if html is not None:
         converted = {}
         try:

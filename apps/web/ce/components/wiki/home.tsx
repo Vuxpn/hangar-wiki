@@ -5,6 +5,7 @@
  */
 
 import { BookOpen, Globe2, Lock } from "lucide-react";
+import { orderBy } from "lodash-es";
 import { observer } from "mobx-react";
 import Link from "next/link";
 // plane imports
@@ -42,7 +43,7 @@ export const WikiHome = observer(function WikiHome({ workspaceSlug }: { workspac
   const { getUserDetails } = useMember();
 
   const pages = Object.values(store.data).filter((page) => !page.archived_at);
-  const recent = pages.toSorted((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).slice(0, 12);
+  const recent = orderBy(pages, [(page) => String(page.updated_at ?? "")], ["desc"]).slice(0, 12);
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-8">

@@ -31,7 +31,7 @@ const replaceSchema = z
   });
 
 /** Empty a root fragment, then merge the replacement content into it. */
-const replaceFragment = (document: Y.Doc, fragmentName: string, replacement: Uint8Array) => {
+export const replaceFragment = (document: Y.Doc, fragmentName: string, replacement: Uint8Array) => {
   const fragment = document.getXmlFragment(fragmentName);
   fragment.delete(0, fragment.length);
   Y.applyUpdate(document, replacement);
@@ -46,6 +46,9 @@ const replaceFragment = (document: Y.Doc, fragmentName: string, replacement: Uin
  * so every editor receives it and the regular save persists it. When the
  * document is not loaded here, the answer is `applied: false` and the API
  * writes the database itself.
+ *
+ * Only documents loaded on this instance are seen: run a single live replica,
+ * or a page open on another replica can overwrite the API's direct write.
  */
 @Controller("/documents")
 export class DocumentReplaceController {
@@ -70,7 +73,7 @@ export class DocumentReplaceController {
 
     // Saves run with the context of a connection; borrow an editor's so the
     // store goes through the same permission checks as their own edits.
-    const editor = loaded.getConnections()[0];
+    const editor = loaded.getConnections().find((connection) => !connection.readOnly);
     if (!editor) {
       // Loaded but everyone has left: the pending save would overwrite a
       // direct database write, so ask the caller to retry once it settles.

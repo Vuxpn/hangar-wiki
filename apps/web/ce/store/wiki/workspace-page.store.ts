@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { set, unset } from "lodash-es";
+import { set, sortBy, unset } from "lodash-es";
 import { action, computed, makeObservable, observable, runInAction } from "mobx";
 import { computedFn } from "mobx-utils";
 // plane imports
@@ -134,10 +134,7 @@ export class WorkspacePageStore implements IWorkspacePageStore {
   }
 
   get sortedCollections() {
-    return Object.values(this.collections).toSorted((a, b) => {
-      if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
-      return a.sort_order - b.sort_order;
-    });
+    return sortBy(Object.values(this.collections), [(c) => (c.is_default ? 0 : 1), (c) => c.sort_order]);
   }
 
   get defaultCollection() {
@@ -149,13 +146,7 @@ export class WorkspacePageStore implements IWorkspacePageStore {
   getPageById = computedFn((pageId: string) => this.data?.[pageId] || undefined);
 
   private byOrder = (ids: string[]) =>
-    ids.toSorted((a, b) => {
-      const pa = this.data[a];
-      const pb = this.data[b];
-      return (
-        (pa?.sort_order ?? 0) - (pb?.sort_order ?? 0) || String(pa?.created_at).localeCompare(String(pb?.created_at))
-      );
-    });
+    sortBy(ids, [(id) => this.data[id]?.sort_order ?? 0, (id) => String(this.data[id]?.created_at ?? "")]);
 
   getRootPageIds = computedFn((collectionId: string, archived = false) =>
     this.byOrder(
@@ -349,6 +340,7 @@ export class WorkspacePageStore implements IWorkspacePageStore {
       for (const page of Object.values(this.data)) {
         if (page.parent_id === pageId) page.mutateWikiProperties({ parent_id: null });
       }
+      this.adjustSubPageCount(this.data[pageId]?.parent_id, -1);
       unset(this.data, [pageId]);
     });
   };
@@ -374,12 +366,20 @@ export class WorkspacePageStore implements IWorkspacePageStore {
       if (payload.sort_order !== undefined) next.sort_order = payload.sort_order;
       page.mutateWikiProperties(next);
       if (next.collection_id) this.refileSubtree(pageId, next.collection_id);
+      if (page.parent_id !== before.parent_id) {
+        this.adjustSubPageCount(before.parent_id, -1);
+        this.adjustSubPageCount(page.parent_id, 1);
+      }
     });
     try {
       const updated = await this.service.movePage(workspaceSlug, pageId, payload);
       runInAction(() => this.addPageToStore(updated));
     } catch (error) {
       runInAction(() => {
+        if (page.parent_id !== before.parent_id) {
+          this.adjustSubPageCount(page.parent_id, -1);
+          this.adjustSubPageCount(before.parent_id, 1);
+        }
         page.mutateWikiProperties(before);
         if (before.collection_id) this.refileSubtree(pageId, before.collection_id);
       });
@@ -387,11 +387,19 @@ export class WorkspacePageStore implements IWorkspacePageStore {
     }
   };
 
-  private refileSubtree(pageId: string, collectionId: string) {
-    for (const childId of this.getChildPageIds(pageId)) {
-      this.data[childId]?.mutateWikiProperties({ collection_id: collectionId });
-      this.refileSubtree(childId, collectionId);
+  private refileSubtree(pageId: string, collectionId: string, seen = new Set<string>()) {
+    // Archived children follow too, so restoring one puts it back in the right collection.
+    seen.add(pageId);
+    for (const child of Object.values(this.data)) {
+      if (child.parent_id !== pageId || !child.id || seen.has(child.id)) continue;
+      child.mutateWikiProperties({ collection_id: collectionId });
+      this.refileSubtree(child.id, collectionId, seen);
     }
+  }
+
+  private adjustSubPageCount(parentId: string | null | undefined, delta: number) {
+    const parent = parentId ? this.data[parentId] : undefined;
+    if (parent) parent.mutateWikiProperties({ sub_pages_count: Math.max(0, parent.sub_pages_count + delta) });
   }
 
   /** A sort order that places an item between two neighbours (either may be missing). */

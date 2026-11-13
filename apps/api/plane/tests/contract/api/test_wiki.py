@@ -320,3 +320,57 @@ class TestWikiCollections:
         assert other.delete(url).status_code == status.HTTP_403_FORBIDDEN
         # ...but may write pages in a public collection.
         assert create_page(other, collection_id=created["id"]).status_code == status.HTTP_201_CREATED
+
+
+@pytest.mark.contract
+class TestWikiReviewFixes:
+    @pytest.mark.django_db
+    def test_editor_of_private_collection_cannot_publish_its_pages(self, api_key_client, workspace, member):
+        user, other = member
+        private = api_key_client.post(f"{BASE}/collections/", {"name": "HR", "access": 1}, format="json").json()
+        public = api_key_client.post(f"{BASE}/collections/", {"name": "All"}, format="json").json()
+        page = create_page(api_key_client, collection_id=private["id"]).json()
+        api_key_client.post(
+            f"{BASE}/collections/{private['id']}/members/", {"member": str(user.id), "access": 2}, format="json"
+        )
+        row_url = f"{BASE}/collections/{private['id']}/pages/{page['page_collection_id']}/"
+        assert other.delete(row_url).status_code == status.HTTP_403_FORBIDDEN
+        assert other.patch(row_url, {"collection": public["id"]}, format="json").status_code == 403
+        added = other.post(f"{BASE}/collections/{public['id']}/pages/", {"page_ids": [page["id"]]}, format="json")
+        assert added.status_code == status.HTTP_403_FORBIDDEN
+        # The collection's owner may.
+        assert api_key_client.patch(row_url, {"collection": public["id"]}, format="json").status_code == 200
+
+    @pytest.mark.django_db
+    def test_deleting_a_page_keeps_its_children(self, api_key_client, workspace):
+        parent = create_page(api_key_client).json()
+        child = create_page(api_key_client, parent_id=parent["id"]).json()
+        api_key_client.post(f"{BASE}/pages/{parent['id']}/archive/")
+        assert api_key_client.delete(f"{BASE}/pages/{parent['id']}/").status_code == status.HTTP_204_NO_CONTENT
+        kept = Page.objects.get(pk=child["id"])
+        assert kept.parent_id is None and kept.deleted_at is None
+
+    @pytest.mark.django_db
+    def test_renaming_without_live_server_drops_the_stale_title(self, api_key_client, workspace):
+        page = create_page(api_key_client).json()
+        Page.objects.filter(pk=page["id"]).update(description_binary=b"old-state")
+        api_key_client.put(f"{BASE}/pages/{page['id']}/", {"name": "New title"}, format="json")
+        stored = Page.objects.get(pk=page["id"])
+        assert stored.name == "New title" and stored.description_binary is None
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        "payload",
+        [{"name": 5, "description_html": "<p></p>"}, {"name": "x", "description_html": "<p></p>", "collection_id": "nope"}],
+    )
+    def test_malformed_create_is_a_400(self, api_key_client, workspace, payload):
+        assert api_key_client.post(f"{BASE}/pages/", payload, format="json").status_code == 400
+
+    @pytest.mark.django_db
+    def test_malformed_update_changes_nothing(self, api_key_client, workspace):
+        page = create_page(api_key_client).json()
+        response = api_key_client.put(
+            f"{BASE}/pages/{page['id']}/", {"archived_at": "2026-01-01", "name": ""}, format="json"
+        )
+        assert response.status_code == 400
+        assert Page.objects.get(pk=page["id"]).archived_at is None
