@@ -13,6 +13,7 @@ view, which keeps validation, hierarchy rules, activity and webhooks in one plac
 import json
 
 from django.db import transaction
+from django.http import QueryDict
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.response import Response
@@ -31,7 +32,7 @@ from plane.db.models import Issue, Project
 from plane.utils.host import base_host
 from plane.ext.views.epic import EPIC_IMMUTABLE_FIELDS, epic_queryset, project_epic_type
 
-from plane.ext.api_v1.helpers import feature_not_enabled, replace_request_data
+from plane.ext.api_v1.helpers import feature_not_enabled, replace_request_data, require_mapping
 
 EPIC = "Epic"
 MAX_EPIC_WORK_ITEMS_PER_REQUEST = 100
@@ -49,10 +50,13 @@ def epic_payload(data):
 
     Type and parent are server-controlled, as on the app API's Epic endpoint.
     """
+    require_mapping(data)
     payload = {key: value for key, value in data.items() if key not in EPIC_IMMUTABLE_FIELDS}
     for sdk_field, core_field in RENAMED_FIELDS.items():
         if sdk_field in payload:
-            payload[core_field] = payload.pop(sdk_field)
+            payload.pop(sdk_field)
+            # A form body repeats list keys; .items() would keep only the last.
+            payload[core_field] = data.getlist(sdk_field) if isinstance(data, QueryDict) else data[sdk_field]
     return payload
 
 
@@ -136,7 +140,7 @@ class EpicWorkItemsAPIEndpoint(BaseAPIView):
             child=serializers.UUIDField(), allow_empty=False, max_length=MAX_EPIC_WORK_ITEMS_PER_REQUEST
         )
         try:
-            work_item_ids = id_list.run_validation(request.data.get("work_item_ids"))
+            work_item_ids = id_list.run_validation(require_mapping(request.data).get("work_item_ids"))
         except serializers.ValidationError as exc:
             return Response({"work_item_ids": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
         work_item_ids = list(dict.fromkeys(work_item_ids))

@@ -258,6 +258,18 @@ class TestWorkItemProperties:
         assert api_key_client.delete(f"{base}/work-item-properties/{prop.id}/").status_code == 204
         assert not IssueProperty.objects.filter(pk=prop.id).exists()
 
+    def test_non_object_bodies_are_refused(self, api_key_client, workspace, project, task_type, issue):
+        prop = make_property(task_type, PropertyTypeChoices.TEXT)
+        base = v1(workspace, project)
+        for body in ([], "x"):
+            for method, url in (
+                ("post", f"{base}/work-item-types/{task_type.id}/work-item-properties/"),
+                ("patch", f"{base}/work-item-properties/{prop.id}/"),
+                ("post", f"{base}/work-items/{issue.id}/work-item-properties/{prop.id}/values/"),
+            ):
+                response = getattr(api_key_client, method)(url, body, format="json")
+                assert response.status_code == status.HTTP_400_BAD_REQUEST, (method, url, body)
+
     def test_writes_are_admin_only(self, workspace, project, task_type):
         member, _ = role_client(workspace, project, MEMBER)
         prop = make_property(task_type, PropertyTypeChoices.SELECT)
@@ -410,3 +422,4 @@ class TestFeatures:
         assert response.status_code == status.HTTP_200_OK
         assert response.data["work_item_types"] is False
         assert response.data["states_owned_by_workspace"] is False
+        assert response.data["wiki"] is True

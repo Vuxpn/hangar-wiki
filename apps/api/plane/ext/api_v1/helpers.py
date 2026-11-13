@@ -4,6 +4,9 @@
 
 """Shared plumbing for the plane-sdk compatible /api/v1/ endpoints."""
 
+from collections.abc import Mapping
+
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 # Plane answers a feature its plan lacks with 402, and plane-sdk clients (the
@@ -18,10 +21,22 @@ def feature_not_enabled(feature):
     )
 
 
+def require_mapping(data):
+    """Refuse a body that is valid JSON but not an object, such as [] or "x"."""
+    if not isinstance(data, Mapping):
+        raise ValidationError({"error": "Expected a JSON object"})
+    return data
+
+
 def replace_request_data(request, data):
     """Hand a translated payload to a core view that reads request.data.
 
     Lets a compatibility endpoint rename plane-sdk fields and then delegate to
     the core view, so validation, activity and webhooks stay in one place.
+
+    Relies on DRF's private ``Request._full_data`` (verified against
+    djangorestframework 3.18.2); a unit test guards against drift.
     """
+    if not isinstance(data, dict):
+        raise ValidationError({"error": "Expected a JSON object"})
     request._full_data = data

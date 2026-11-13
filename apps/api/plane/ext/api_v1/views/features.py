@@ -107,9 +107,10 @@ class ProjectFeaturesAPIEndpoint(ProjectDetailAPIEndpoint):
 
 
 class WorkspaceFeaturesAPIEndpoint(BaseAPIView):
-    """None of Plane's workspace-level features exist in Hangar."""
+    """Plane's workspace-level features, of which Hangar has only the wiki."""
 
     permission_classes = [WorkspaceUserPermission]
 
     def get(self, request, slug):
-        return Response({flag: False for flag in WORKSPACE_FLAGS}, status=status.HTTP_200_OK)
+        # Hangar has a workspace wiki; the rest of these do not exist here.
+        return Response({flag: flag == "wiki" for flag in WORKSPACE_FLAGS}, status=status.HTTP_200_OK)

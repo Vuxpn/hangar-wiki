@@ -56,7 +56,9 @@ class WorkLogDetailAPIEndpoint(BaseAPIView):
     permission_classes = [ProjectLitePermission]
 
     def get_worklog(self, slug, project_id, work_item_id, pk):
-        return IssueWorkLog.objects.get(workspace__slug=slug, project_id=project_id, issue_id=work_item_id, pk=pk)
+        return IssueWorkLog.objects.get(
+            workspace__slug=slug, project_id=project_id, issue_id=work_item_id, issue__deleted_at__isnull=True, pk=pk
+        )
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def patch(self, request, slug, project_id, work_item_id, pk):

@@ -5,6 +5,7 @@
 """Contract: worklogs on /api/v1/ in the paths and shapes plane-sdk 0.3.1 uses."""
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -129,6 +130,14 @@ class TestWorkLogs:
         assert api_key_client.post(url, {"duration": 5}, format="json").status_code == status.HTTP_404_NOT_FOUND
         assert api_key_client.delete(f"{url}{entry.id}/").status_code == status.HTTP_404_NOT_FOUND
         assert IssueWorkLog.objects.filter(pk=entry.id).exists()
+
+    def test_entries_of_a_deleted_work_item_are_not_found(self, api_key_client, workspace, tracked, issue,
+                                                         create_user):
+        entry = log(issue, create_user, 10)
+        Issue.all_objects.filter(pk=issue.id).update(deleted_at=timezone.now())
+        detail = f"{worklogs_url(workspace, tracked, issue)}{entry.id}/"
+        assert api_key_client.patch(detail, {"duration": 5}, format="json").status_code == status.HTTP_404_NOT_FOUND
+        assert api_key_client.delete(detail).status_code == status.HTTP_404_NOT_FOUND
 
     def test_another_workspace_is_refused(self, workspace, tracked, issue, create_user):
         elsewhere = Workspace.objects.create(name="Elsewhere", slug="elsewhere-wl", owner=create_user)

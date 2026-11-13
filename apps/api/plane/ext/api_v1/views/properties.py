@@ -31,6 +31,7 @@ from plane.ext.views.issue_type import (
     writable_issue_properties,
 )
 
+from plane.ext.api_v1.helpers import require_mapping
 from plane.ext.api_v1.serializers.properties import (
     WorkItemPropertyAPISerializer,
     WorkItemPropertyOptionAPISerializer,
@@ -85,7 +86,7 @@ class WorkItemPropertyListCreateAPIEndpoint(BaseAPIView):
             return Response(PROPERTY_NEEDS_TYPE, status=status.HTTP_400_BAD_REQUEST)
         issue_type = project_issue_types(slug, project_id).get(pk=type_id)
 
-        serializer = IssuePropertySerializer(data=property_payload(request.data))
+        serializer = IssuePropertySerializer(data=property_payload(require_mapping(request.data)))
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         options = request.data.get("options") or []
@@ -119,7 +120,8 @@ class WorkItemPropertyDetailAPIEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN])
     def patch(self, request, slug, project_id, property_id, type_id=None):
         prop = get_property(slug, project_id, property_id, type_id)
-        serializer = IssuePropertySerializer(prop, data=property_payload(request.data, prop), partial=True)
+        payload = property_payload(require_mapping(request.data), prop)
+        serializer = IssuePropertySerializer(prop, data=payload, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         prop = serializer.save()
@@ -246,7 +248,7 @@ class WorkItemPropertyValueAPIEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def post(self, request, slug, project_id, work_item_id, property_id):
         issue, prop = self.get_target(request, slug, project_id, work_item_id, property_id)
-        if "value" not in request.data:
+        if "value" not in require_mapping(request.data):
             return Response({"value": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
         values = raw_values(request.data["value"])
         if values is None:

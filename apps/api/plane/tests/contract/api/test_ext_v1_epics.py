@@ -94,6 +94,27 @@ class TestEpics:
         assert IssueAssignee.objects.filter(issue=created, assignee=create_user).exists()
         assert response.data["labels"] == [str(label.id)]
 
+    def test_non_object_bodies_are_refused(self, api_key_client, workspace, project, epic):
+        for body in ([], "x"):
+            for method, url in (
+                ("post", epics_url(workspace, project)),
+                ("patch", f"{epics_url(workspace, project)}{epic.id}/"),
+                ("post", f"{epics_url(workspace, project)}{epic.id}/issues/"),
+            ):
+                response = getattr(api_key_client, method)(url, body, format="json")
+                assert response.status_code == status.HTTP_400_BAD_REQUEST, (method, url, body)
+
+    def test_form_bodies_keep_every_assignee(self, api_key_client, workspace, project, state, create_user):
+        _, member_user = role_client(workspace, project, MEMBER)
+        response = api_key_client.post(
+            epics_url(workspace, project),
+            {"name": "Form", "assignee_ids": [str(create_user.id), str(member_user.id)]},
+            format="multipart",
+        )
+        assert response.status_code == status.HTTP_201_CREATED, response.data
+        assignees = IssueAssignee.objects.filter(issue_id=response.data["id"]).values_list("assignee_id", flat=True)
+        assert set(assignees) == {create_user.id, member_user.id}
+
     def test_retrieve_update_delete(self, api_key_client, workspace, project, epic, task):
         detail = f"{epics_url(workspace, project)}{epic.id}/"
         assert api_key_client.get(detail).data["name"] == "Launch"

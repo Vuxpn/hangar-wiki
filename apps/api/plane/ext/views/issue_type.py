@@ -77,8 +77,9 @@ def create_custom_issue_type(project, serializer):
     work item types unless promoted by a future hierarchy API.
     """
     ensure_project_system_types(project)
-    issue_type = serializer.save(workspace=project.workspace, is_epic=False)
-    ProjectIssueType.objects.create(project=project, issue_type=issue_type)
+    with transaction.atomic():
+        issue_type = serializer.save(workspace=project.workspace, is_epic=False)
+        ProjectIssueType.objects.create(project=project, issue_type=issue_type)
     return issue_type
 
 
