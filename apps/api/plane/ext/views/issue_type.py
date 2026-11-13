@@ -41,6 +41,75 @@ def scoped_property(slug, project_id, property_id):
     )
 
 
+def scoped_option(slug, project_id, property_id, option_id):
+    """An option reachable only through a property of a type linked to this project."""
+    return IssuePropertyOption.objects.get(
+        pk=option_id,
+        property_id=property_id,
+        workspace__slug=slug,
+        property__issue_type__project_issue_types__project_id=project_id,
+    )
+
+
+# Only select-style properties carry options.
+OPTION_PROPERTY_TYPES = (PropertyTypeChoices.SELECT, PropertyTypeChoices.MULTI_SELECT)
+
+
+def writable_issue_properties(slug, project_id, issue):
+    """Properties a work item may hold values for: active ones of its own type.
+
+    Project-level scoping alone would let clients attach values from a
+    different type and create data that no issue UI can interpret.
+    """
+    return IssueProperty.objects.filter(
+        workspace__slug=slug,
+        issue_type__project_issue_types__project_id=project_id,
+        issue_type_id=issue.type_id,
+        is_active=True,
+        deleted_at__isnull=True,
+    )
+
+
+def create_custom_issue_type(project, serializer):
+    """Save a validated type as a custom level-0 type linked to the project.
+
+    System types have stable identities; additional types are custom level-0
+    work item types unless promoted by a future hierarchy API.
+    """
+    ensure_project_system_types(project)
+    issue_type = serializer.save(workspace=project.workspace, is_epic=False)
+    ProjectIssueType.objects.create(project=project, issue_type=issue_type)
+    return issue_type
+
+
+def issue_type_update_error(issue_type, validated_data):
+    """The refusal for an update a type may not take, or None."""
+    if issue_type.system_key and validated_data.get("is_active") is False:
+        return {"is_active": "System work item types cannot be deactivated"}
+    return None
+
+
+def issue_type_delete_error(issue_type):
+    """The refusal for deleting a type that must stay, or None."""
+    if issue_type.system_key:
+        return {"error": "System work item types cannot be deleted"}
+    if Issue.objects.filter(type=issue_type).exists():
+        return {"error": "This type is in use — deactivate it instead"}
+    return None
+
+
+def property_delete_error(prop):
+    """The refusal for deleting a property the product reads, or None."""
+    if prop.system_key:
+        # The product reads this one. Renaming it is fine -- losing it would
+        # take the trainers away from the planner and the checklists.
+        return {
+            "error": "This property is part of the Workshop type and cannot be removed. Rename it instead.",
+            "code": "system_property",
+        }
+    return None
+
+
 class IssueTypesEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
     def get(self, request, slug, project_id):
@@ -62,14 +131,10 @@ class IssueTypesEndpoint(BaseAPIView):
         from plane.db.models import Project
 
         project = Project.objects.get(workspace__slug=slug, pk=project_id)
-        ensure_project_system_types(project)
         serializer = IssueTypeSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        # System types have stable identities; additional types are custom
-        # level-0 work item types unless promoted by a future hierarchy API.
-        issue_type = serializer.save(workspace=project.workspace, is_epic=False)
-        ProjectIssueType.objects.create(project=project, issue_type=issue_type)
+        issue_type = create_custom_issue_type(project, serializer)
         return Response(IssueTypeSerializer(issue_type).data, status=status.HTTP_201_CREATED)
 
 
@@ -101,27 +166,16 @@ class IssueTypeDetailEndpoint(BaseAPIView):
         serializer = IssueTypeSerializer(issue_type, data=request.data, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        if issue_type.system_key and serializer.validated_data.get("is_active") is False:
-            return Response(
-                {"is_active": "System work item types cannot be deactivated"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if error := issue_type_update_error(issue_type, serializer.validated_data):
+            return Response(error, status=status.HTTP_400_BAD_REQUEST)
         serializer.save()
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @allow_permission([ROLE.ADMIN])
     def delete(self, request, slug, project_id, type_id):
         issue_type = self.get_type(slug, project_id, type_id)
-        if issue_type.system_key:
-            return Response(
-                {"error": "System work item types cannot be deleted"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if Issue.objects.filter(type=issue_type).exists():
-            return Response(
-                {"error": "This type is in use — deactivate it instead"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if error := issue_type_delete_error(issue_type):
+            return Response(error, status=status.HTTP_400_BAD_REQUEST)
         issue_type.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -156,16 +210,8 @@ class IssuePropertyDetailEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN])
     def delete(self, request, slug, project_id, property_id):
         prop = scoped_property(slug, project_id, property_id)
-        if prop.system_key:
-            # The product reads this one. Renaming it is fine -- losing it would
-            # take the trainers away from the planner and the checklists.
-            return Response(
-                {
-                    "error": "This property is part of the Workshop type and cannot be removed. Rename it instead.",
-                    "code": "system_property",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if error := property_delete_error(prop):
+            return Response(error, status=status.HTTP_400_BAD_REQUEST)
         prop.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -180,7 +226,7 @@ class IssuePropertyOptionsEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN])
     def post(self, request, slug, project_id, property_id):
         prop = scoped_property(slug, project_id, property_id)
-        if prop.property_type not in (PropertyTypeChoices.SELECT, PropertyTypeChoices.MULTI_SELECT):
+        if prop.property_type not in OPTION_PROPERTY_TYPES:
             return Response(
                 {"error": "Options are only valid for select properties"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -194,12 +240,7 @@ class IssuePropertyOptionsEndpoint(BaseAPIView):
 
 class IssuePropertyOptionDetailEndpoint(BaseAPIView):
     def get_option(self, slug, project_id, property_id, option_id):
-        return IssuePropertyOption.objects.get(
-            pk=option_id,
-            property_id=property_id,
-            workspace__slug=slug,
-            property__issue_type__project_issue_types__project_id=project_id,
-        )
+        return scoped_option(slug, project_id, property_id, option_id)
 
     @allow_permission([ROLE.ADMIN])
     def patch(self, request, slug, project_id, property_id, option_id):
@@ -264,18 +305,7 @@ class IssuePropertyValuesEndpoint(BaseAPIView):
             return Response({"error": "Expected a property→values map"}, status=status.HTTP_400_BAD_REQUEST)
 
         # A property is writable only when it belongs to this issue's type.
-        # Project-level scoping alone would let clients attach values from a
-        # different type and create data that no issue UI can interpret.
-        writable = {
-            str(prop.id): prop
-            for prop in IssueProperty.objects.filter(
-                workspace__slug=slug,
-                issue_type__project_issue_types__project_id=project_id,
-                issue_type_id=issue.type_id,
-                is_active=True,
-                deleted_at__isnull=True,
-            )
-        }
+        writable = {str(prop.id): prop for prop in writable_issue_properties(slug, project_id, issue)}
 
         unknown = [key for key in payload.keys() if key not in writable]
         if unknown:

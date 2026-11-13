@@ -50,6 +50,21 @@ def can_modify(worklog, user, slug, project_id):
     ).exists()
 
 
+def record_worklog_activity(request, action, issue_id, project_id, duration, current_instance=None):
+    """Record a worklog change on the work item's activity feed."""
+    issue_activity.delay(
+        type=f"worklog.activity.{action}",
+        requested_data=json.dumps({"duration": duration}, cls=DjangoJSONEncoder),
+        actor_id=str(request.user.id),
+        issue_id=str(issue_id),
+        project_id=str(project_id),
+        current_instance=current_instance,
+        epoch=int(timezone.now().timestamp()),
+        notification=True,
+        origin=base_host(request=request, is_app=True),
+    )
+
+
 class IssueWorkLogsEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def get(self, request, slug, project_id, issue_id):
@@ -85,17 +100,7 @@ class IssueWorkLogsEndpoint(BaseAPIView):
             workspace=issue.workspace,
             logged_by=request.user,
         )
-        issue_activity.delay(
-            type="worklog.activity.created",
-            requested_data=json.dumps({"duration": worklog.duration}, cls=DjangoJSONEncoder),
-            actor_id=str(request.user.id),
-            issue_id=str(issue_id),
-            project_id=str(project_id),
-            current_instance=None,
-            epoch=int(timezone.now().timestamp()),
-            notification=True,
-            origin=base_host(request=request, is_app=True),
-        )
+        record_worklog_activity(request, "created", issue_id, project_id, worklog.duration)
         return Response(IssueWorkLogSerializer(worklog).data, status=status.HTTP_201_CREATED)
 
 
@@ -118,17 +123,7 @@ class IssueWorkLogDetailEndpoint(BaseAPIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         worklog = serializer.save()
-        issue_activity.delay(
-            type="worklog.activity.updated",
-            requested_data=json.dumps({"duration": worklog.duration}, cls=DjangoJSONEncoder),
-            actor_id=str(request.user.id),
-            issue_id=str(issue_id),
-            project_id=str(project_id),
-            current_instance=current_instance,
-            epoch=int(timezone.now().timestamp()),
-            notification=True,
-            origin=base_host(request=request, is_app=True),
-        )
+        record_worklog_activity(request, "updated", issue_id, project_id, worklog.duration, current_instance)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
@@ -143,15 +138,5 @@ class IssueWorkLogDetailEndpoint(BaseAPIView):
             )
         duration = worklog.duration
         worklog.delete()
-        issue_activity.delay(
-            type="worklog.activity.deleted",
-            requested_data=json.dumps({"duration": duration}, cls=DjangoJSONEncoder),
-            actor_id=str(request.user.id),
-            issue_id=str(issue_id),
-            project_id=str(project_id),
-            current_instance=None,
-            epoch=int(timezone.now().timestamp()),
-            notification=True,
-            origin=base_host(request=request, is_app=True),
-        )
+        record_worklog_activity(request, "deleted", issue_id, project_id, duration)
         return Response(status=status.HTTP_204_NO_CONTENT)
