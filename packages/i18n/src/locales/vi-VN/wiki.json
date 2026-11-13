@@ -109,5 +109,48 @@
     "nested_pages_download_banner": {
       "title": "Trang lồng nhau yêu cầu gói trả phí. Nâng cấp để mở khóa."
     }
+  },
+  "workspace_wiki": {
+    "toasts": {
+      "move_error": "Không thể di chuyển trang. Vui lòng thử lại.",
+      "archive_error": "Không thể lưu trữ trang. Vui lòng thử lại.",
+      "restore_error": "Không thể khôi phục trang. Vui lòng thử lại.",
+      "members_error": "Không thể cập nhật thành viên. Vui lòng thử lại."
+    },
+    "sidebar": {
+      "add_sub_page": "Thêm trang con"
+    },
+    "collection": {
+      "public_hint": "Mọi thành viên workspace đều xem và sửa được.",
+      "private_hint": "Chỉ bạn và những người bạn thêm vào.",
+      "access_fixed": "Bộ sưu tập giữ nguyên chế độ công khai hay riêng tư sau khi tạo."
+    },
+    "delete": {
+      "move_title": "Chuyển trang sang Chung",
+      "move_hint": "Các trang vẫn hiển thị với cả workspace trong bộ sưu tập Chung.",
+      "archive_title": "Lưu trữ các trang",
+      "archive_hint": "Các trang được chuyển vào mục lưu trữ và có thể khôi phục.",
+      "private_hint": "Các trang trong bộ sưu tập riêng tư này sẽ được lưu trữ và chuyển thành riêng tư của người tạo."
+    },
+    "members": {
+      "view": "Chỉ xem",
+      "comment": "Được bình luận",
+      "edit": "Được sửa",
+      "private_hint": "Chỉ những người này thấy được bộ sưu tập.",
+      "public_hint": "Mọi thành viên workspace đã sửa được; thêm khách hoặc giới hạn quyền tại đây.",
+      "pick": "Chọn thành viên",
+      "empty": "Chưa có thành viên nào."
+    },
+    "not_found": {
+      "title": "Không tìm thấy trang",
+      "description": "Trang không tồn tại hoặc bạn không có quyền xem.",
+      "back": "Quay lại wiki"
+    },
+    "home": {
+      "collections": "Bộ sưu tập",
+      "page_count": "{count} trang",
+      "recent": "Cập nhật gần đây",
+      "empty": "Chưa có trang nào. Hãy tạo từ thanh bên."
+    }
   }
 }

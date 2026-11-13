@@ -17,7 +17,8 @@ export default function WorkspaceLayout() {
   return (
     <AuthenticationWrapper>
       <WorkspaceAuthWrapper>
-        <AppRailVisibilityProvider>
+        {/* Fork (see FORK.md): the rail switches between Projects and the Wiki. */}
+        <AppRailVisibilityProvider isEnabled>
           <WorkspaceContentWrapper>
             <GlobalModals workspaceSlug={workspaceSlug} />
             <Outlet />

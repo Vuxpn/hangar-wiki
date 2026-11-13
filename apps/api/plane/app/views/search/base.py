@@ -217,11 +217,23 @@ class GlobalSearchEndpoint(BaseAPIView):
 
             pages = pages.annotate(project_id=Subquery(project_subquery)).filter(project_id=project_id)
 
-        return (
+        pages = (
             pages.order_by("-created_at")
             .distinct()
             .values("name", "id", "project_ids", "project_identifiers", "workspace__slug")
         )
+        # Fork (see FORK.md): workspace wiki pages the caller may read, outside a project search.
+        if workspace_search != "false" or not project_id:
+            from plane.ext.wiki.access import visible_pages
+
+            wiki_pages = (
+                visible_pages(self.request.user, slug)
+                .filter(q, archived_at__isnull=True)
+                .order_by("-created_at")
+                .values("name", "id", "workspace__slug")[:50]
+            )
+            return list(pages) + [{**page, "project_ids": [], "project_identifiers": []} for page in wiki_pages]
+        return pages
 
     def filter_views(self, query, slug, project_id, workspace_search):
         fields = ["name"]

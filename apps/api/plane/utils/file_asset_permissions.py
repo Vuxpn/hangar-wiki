@@ -72,6 +72,12 @@ def can_read_file_asset(*, user_id, asset: FileAsset) -> bool:
             return False
 
     if asset.page_id:
+        # Fork (see FORK.md): workspace wiki pages follow the wiki's access policy.
+        if asset.page.is_global and not ProjectPage.objects.filter(page_id=asset.page_id).exists():
+            from plane.db.models import User
+            from plane.ext.wiki.access import VIEW, page_access
+
+            return page_access(User(id=user_id), asset.page) >= VIEW
         if asset.page.owned_by_id == user_id:
             return True
         if asset.page.access != asset.page.PUBLIC_ACCESS:
