@@ -91,6 +91,8 @@ PROJECT_BASE = "workspaces/<str:slug>/projects/<uuid:project_id>"
 EPIC_BASE = "workspaces/<str:slug>/projects/<uuid:project_id>/epics"
 
 urlpatterns = [
+    # plane-sdk compatible API-key endpoints for fork features (/api/v1/...).
+    path("v1/", include("plane.ext.api_v1.urls")),
     # The instance configuration for a signed-in user; see InstanceMemberConfigEndpoint.
     path("users/me/instance-config/", InstanceMemberConfigEndpoint.as_view(), name="instance-member-config"),
     path(
